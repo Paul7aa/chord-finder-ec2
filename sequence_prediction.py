@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torchaudio
 import librosa
+import io
 
 # Define params
 SAMPLE_RATE = 22050
