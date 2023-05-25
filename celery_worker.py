@@ -24,7 +24,6 @@ N_MELS = 64
 MODEL =  CNN()
 MODEL.load_state_dict(torch.load('models/model.pt', map_location=("cpu")))
 MODEL.eval()
-print(str(sys.getsizeof(MODEL)))
 # set device
 DEVICE = torch.device('cpu')
 
@@ -223,5 +222,5 @@ def process_audio(audio_data_json):
     base64_audio_data = audio_data_json['AudioData']
     audio_data = base64.b64decode(base64_audio_data)
     signal, sr = librosa.load(io.BytesIO(audio_data), sr=SAMPLE_RATE)
-    # predictions = onset_split_prediction(signal, sr)
+    predictions = onset_split_prediction(signal, sr)
     return predictions

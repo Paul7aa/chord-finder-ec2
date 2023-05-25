@@ -11,8 +11,8 @@ async def analyse(audio_data_json: dict):
         task_id = str(uuid4())  # Generate a unique task ID
         process_audio.apply_async(args=[audio_data_json], task_id=task_id)
         return {"task_id": task_id}
-    except:
-        print("Failed to process audio")
+    except Exception as e:  # Add the 'as e' to capture the exception into variable e
+        print(f"Failed to process audio. Exception: {e}")  # Print the exception
         return "Failed to process audio"
     
     
