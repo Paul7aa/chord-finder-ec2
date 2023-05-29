@@ -141,67 +141,121 @@ def predict(preprocessed_data):
 
     return predicted_chord_label
  
-def onset_split_prediction(signal, sr):
-    # Apply exponential moving average filter to smooth the signal
-    alpha = 0.0005 # Smoothing factor (adjust as needed)
-    smoothed_signal = np.zeros_like(signal)
-    smoothed_signal[0] = signal[0]
-    for i in range(1, len(signal)):
-        smoothed_signal[i] = alpha * signal[i] + (1 - alpha) * smoothed_signal[i - 1]
+def onset_split_prediction(signal, sr, metronome_type):
+    if metronome_type == 'auto':
+        # Detect onsets using the spectral flux and adaptive threshold
+        # Apply exponential moving average filter to smooth the signal
+        alpha = 0.0005 # Smoothing factor (adjust as needed)
+        smoothed_signal = np.zeros_like(signal)
+        smoothed_signal[0] = signal[0]
+        for i in range(1, len(signal)):
+            smoothed_signal[i] = alpha * signal[i] + (1 - alpha) * smoothed_signal[i - 1]
 
-    # Compute the magnitude spectrogram
-    magnitude = np.abs(librosa.stft(smoothed_signal))
+        # Compute the magnitude spectrogram
+        magnitude = np.abs(librosa.stft(smoothed_signal))
 
-    # Compute the spectral flux as the squared difference between consecutive frames
-    spectral_flux = np.sum(np.diff(magnitude, axis=1) ** 2, axis=0)
+        # Compute the spectral flux as the squared difference between consecutive frames
+        spectral_flux = np.sum(np.diff(magnitude, axis=1) ** 2, axis=0)
 
-    # Calculate the mean and standard deviation of the spectral flux
-    mean_flux = np.mean(spectral_flux)
-    std_flux = np.std(spectral_flux)
+        # Detect onsets using the spectral flux and adaptive threshold
+        onsets = librosa.onset.onset_detect(onset_envelope=spectral_flux,
+                                                hop_length=SAMPLE_RATE,
+                                                sr=sr,
+                                                units='frames',
+                                                backtrack=False,
+                                                pre_max = 10, post_max = 10, pre_avg = 50, post_avg = 50, delta = 0.1,
+                                                wait=0)
 
-    # Set the threshold as a multiple of the standard deviation above the mean
-    threshold_multiplier = 2.5 # Adjust the multiplier as needed
-    threshold = mean_flux + (std_flux * threshold_multiplier)
+        # convert to samples
+        onsets = librosa.frames_to_samples(onsets)
 
-    # Detect onsets using the spectral flux and adaptive threshold
-    onsets = librosa.onset.onset_detect(onset_envelope=spectral_flux,
-                                        hop_length=SAMPLE_RATE,
-                                        sr=sr,
-                                        units='frames',
-                                        backtrack=False,
-                                        pre_max = 10, post_max = 10, pre_avg = 50, post_avg = 50, delta = 0.1,
-                                        wait=0)
+        # You might want to adjust these parameters
+        queue_length = 5  # Number of recent onset distances to consider
+        initial_threshold = SAMPLE_RATE  # Initial threshold until you have enough onsets to compute the moving average
 
-    # Get the beat locations
-    _, beat_frames = librosa.beat.beat_track(y=signal, sr=sr, hop_length=HOP_LENGTH)
-    
-    # Calculate the average duration between beats
-    average_beat_duration = np.mean(np.diff(beat_frames))
 
-    # Calculate the minimum distance based on tempo
-    min_distance = int(average_beat_duration / 0.5)  # Adjust the division factor as needed
+        # filter by moving average
+        recent_distances = []
 
-    # Filter the onsets based on their values and minimum distance
-    filtered_onsets = []
-    last_onset = None
-    for onset in onsets:
-        if last_onset is None or (onset - last_onset) >= min_distance:
-            if spectral_flux[onset] > threshold:
-                filtered_onsets.append(onset)
-                last_onset = onset
+        filtered_onsets = [onsets[0]]  # start with the first onset
 
-    # Plot the waveform with onsets
-    # plot_onsets(signal, sr, filtered_onsets)
+        for i in range(1, len(onsets)):
+            if len(recent_distances) < queue_length:
+                threshold = initial_threshold
+            else:
+                threshold = np.mean(recent_distances)
+
+            if onsets[i] - filtered_onsets[-1] >= threshold:
+                filtered_onsets.append(onsets[i])
+                if len(filtered_onsets) > 1:  # dont add a distance until there are at least two onsets
+                    recent_distances.append(filtered_onsets[-1] - filtered_onsets[-2])
+
+            # If the list of recent distances is too long, remove the oldest distance
+            if len(recent_distances) > queue_length:
+                recent_distances.pop(0) 
+
+        # Shift all onsets by a tenth of the average distance
+        filtered_onsets = filtered_onsets - np.mean(np.diff(filtered_onsets))/10
+
+        # if first onset went under 0, add it back to 0
+        if filtered_onsets[0] < 0: filtered_onsets[0] =0
+
+        filtered_onsets = np.array(filtered_onsets)
+
+        # convert back to frames
+        filtered_onsets = librosa.samples_to_frames(filtered_onsets)
+    else:
+        m_signal, sr = librosa.load(path = r'metronomes\metronome' + metronome_type + ".wav", sr = SAMPLE_RATE)
+        m_signal = m_signal[:len(signal)] # cut metronome audio to length of analysis file
+        onsets = librosa.onset.onset_detect(y = m_signal, sr = SAMPLE_RATE, units='samples')
+
+        spike_threshold = 0.2  # adjust as needed
+
+        # get the first spike sammple
+        first_spike_sample = np.argmax(np.abs(signal) > spike_threshold)
+
+        # Calculate the difference between the first onset and the first spike in samples
+        sample_diff = first_spike_sample - onsets[0]
+
+        # Shift all onsets by the sample difference - 
+        onsets = onsets + sample_diff -  math.trunc(SAMPLE_RATE * 0.25)
+
+        # Filter out onsets that fall outside the valid range of the signal
+        onsets = onsets[(onsets >= 0) & (onsets < len(signal))]
+
+       # Get the maximum amplitude of each slice of audio
+        max_amplitudes = [np.max(np.abs(signal[onsets[i]:onsets[i + 1]])) for i in range(len(onsets) - 1)]
+
+        # Create an array to store the filtered onsets
+        filtered_onsets = []
+
+        # Check if the first slice has significant audio (adjust the threshold as needed)
+        if max_amplitudes[0] > 0.15:  #silence threshold
+            filtered_onsets.append(onsets[0])
+
+        # For each slice of audio, starting from the second one
+        for i in range(1, len(max_amplitudes)):
+            # If the amplitude of the previous slice is not higher than the current one
+            if max_amplitudes[i - 1] <= max_amplitudes[i]:
+                # Keep the onset that started the current slice
+                filtered_onsets.append(onsets[i])
+
+        # Convert the list back to a numpy array
+        filtered_onsets = np.array(filtered_onsets)
+
+        # Convert back to frames
+        filtered_onsets = librosa.samples_to_frames(filtered_onsets)
+
+        # filtered_onsets = librosa.samples_to_frames(onsets)
 
     # Convert onsets to samples
     filtered_onsets = librosa.frames_to_samples(filtered_onsets)
 
     # Split the signal by onsets
     signal_segments = split_signal_by_onsets(signal=signal, filtered_onsets=filtered_onsets)
-
     signal_segments = [preprocess_split(x) for x in signal_segments]
 
-    print(len(signal_segments))
+    print('SEGMENTS: ' + str(len(signal_segments)))
 
     predictions = [predict(x.cpu()) for x in signal_segments]
 
@@ -211,25 +265,26 @@ def onset_split_prediction(signal, sr):
 
     return chord_onsets
 
+
 app = FastAPI()
 
 @app.post("/analyse/")
 async def analyse(audio_data_json: dict):
     try:
         base64_audio_data = audio_data_json['AudioData']
+        metronome_type = audio_data_json['MetronomeType']
+        print('METRONOME: ' + metronome_type)
         audio_data = base64.b64decode(base64_audio_data)
-        results = analyse_audio_file(io.BytesIO(audio_data))  # Call Python function to analyse the audio file
+        results = analyse_audio_file(io.BytesIO(audio_data), metronome_type)  # Call Python function to analyse the audio file
         return results
-    except:
+    except Exception as e:
         print("Failed to process audio")
+        print(e)
         return "Failed to process audio"
-    
-def analyse_audio_file(audio_bytes):
-    # Create a BytesIO object and load it with librosa
+
+def analyse_audio_file(audio_bytes, metronome_type):
     signal, sr = librosa.load(audio_bytes, sr=SAMPLE_RATE)
-    print(signal.size)
-    # process the signal
-    print(signal.dtype)
-    predictions = onset_split_prediction(signal, sr)
+    print('SIGNAL SIZE: ' + str(signal.size))
+    predictions = onset_split_prediction(signal, sr, metronome_type)
     print(predictions)
     return predictions
