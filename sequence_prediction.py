@@ -18,9 +18,11 @@ HOP_LENGTH = 512
 N_MELS = 64
 
 # Load the model
-MODEL =  CNN()
-MODEL.load_state_dict(torch.load('models/model_state_dict.pt', map_location=("cpu")))
+MODEL = CNN()
+MODEL =  torch.load(r'models\model.pt', map_location=torch.device("cpu"))
 MODEL.eval()
+# set device
+DEVICE = torch.device('cpu')
 # set device
 DEVICE = torch.device('cpu')
 
