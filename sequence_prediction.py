@@ -248,6 +248,10 @@ def onset_split_prediction(signal, sr, metronome_type):
 
         # filtered_onsets = librosa.samples_to_frames(onsets)
 
+
+    # Plot the waveform with onsets
+    # plot_onsets(signal, sr, filtered_onsets)
+
     # Convert onsets to samples
     filtered_onsets = librosa.frames_to_samples(filtered_onsets)
 
@@ -264,7 +268,6 @@ def onset_split_prediction(signal, sr, metronome_type):
     chord_onsets = dict(zip(time_onsets.tolist(), predictions))
 
     return chord_onsets
-
 
 app = FastAPI()
 
