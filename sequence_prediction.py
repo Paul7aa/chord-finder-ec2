@@ -55,7 +55,7 @@ class CLASS_MAPPING(Enum):
 
 # PREPROCESSING FUNCTIONS (FOR SPLIT)------------------------------------------
 
-# preprocessing functions
+#preprocessing functions
 
 # function to change sample rate to target rate
 def _resample(signal, sr):
@@ -79,6 +79,41 @@ def _cut(signal):
         signal = signal[:, :math.floor(NUM_SAMPLES)]
     return signal
 
+def _cut_from_onset(signal):
+
+        # convert torch tensor to numpy
+        signal = signal.cpu().numpy()
+        
+        # Convert the 2D numpy array to 1D
+        signal = signal.squeeze()
+
+        onset_env = librosa.onset.onset_strength(y=signal, sr=SAMPLE_RATE)
+
+        # threshold to filter onsets
+        threshold = 0.8
+
+        # Detect onsets using a threshold or percentile
+        onsets = librosa.onset.onset_detect(onset_envelope=onset_env,
+                                            sr=SAMPLE_RATE, units='frames',
+                                            backtrack=False,
+                                            pre_max=20, 
+                                            post_max=20, 
+                                            pre_avg=100, 
+                                            post_avg=100, 
+                                            delta=0.2, 
+                                            wait=0)
+
+        onsets = [onset for onset in onsets if onset_env[onset] > threshold]
+        onsets = librosa.frames_to_samples(onsets)
+        if not len(onsets) == 0:
+            onset = onsets[0]
+            signal = signal[onset:]
+
+        # Convert the processed numpy array back to torch tensor
+        signal = torch.from_numpy(signal).unsqueeze(0).cpu()
+
+        return signal
+
 def _right_pad(signal):
     signal_length = signal.shape[1]
     if signal_length < NUM_SAMPLES:
@@ -94,6 +129,7 @@ def _normalize_data(signal):
     return (signal - mean) / std
 
 #PREPROCESSING FUNCTIONS (FOR SEQUENCE)------------------------------------------
+
 def split_signal_by_onsets(signal, filtered_onsets):
     # Initialize an empty list to store the signal segments
     signal_segments = []
@@ -101,8 +137,8 @@ def split_signal_by_onsets(signal, filtered_onsets):
     # Iterate through the filtered onsets
     for i in range(len(filtered_onsets) - 1):
         # Compute the start and end sample indices for each segment
-        start_sample = filtered_onsets[i] - 22050
-        end_sample = filtered_onsets[i + 1] - 22050
+        start_sample = filtered_onsets[i]
+        end_sample = filtered_onsets[i + 1]
 
         # Extract the segment from the original signal
         segment = signal[start_sample:end_sample]
@@ -126,6 +162,7 @@ def preprocess_split(signal):
     signal = _resample(signal, SAMPLE_RATE)
     signal = _mix_down(signal)
     signal = _cut(signal)
+    signal = _cut_from_onset(signal)
     signal = _right_pad(signal)
     # Apply the Mel Spectrogram transformation
     signal = mel_spectrogram(signal)
@@ -133,6 +170,8 @@ def preprocess_split(signal):
     return signal
 
 def predict(preprocessed_data):
+    MODEL.eval()  # Set the model to evaluation mode
+
     # Make the prediction
     with torch.no_grad():
         prediction = MODEL(preprocessed_data)
@@ -247,10 +286,6 @@ def onset_split_prediction(signal, sr, metronome_type):
         filtered_onsets = librosa.samples_to_frames(filtered_onsets)
 
         # filtered_onsets = librosa.samples_to_frames(onsets)
-
-
-    # Plot the waveform with onsets
-    # plot_onsets(signal, sr, filtered_onsets)
 
     # Convert onsets to samples
     filtered_onsets = librosa.frames_to_samples(filtered_onsets)
