@@ -244,7 +244,7 @@ def onset_split_prediction(signal, sr, metronome_type):
         # convert back to frames
         filtered_onsets = librosa.samples_to_frames(filtered_onsets)
     else:
-        m_signal, sr = librosa.load(path = r'metronomes\metronome' + metronome_type + ".wav", sr = SAMPLE_RATE)
+        m_signal, sr = librosa.load(path = 'metronomes/metronome' + metronome_type + ".wav", sr = SAMPLE_RATE)
         m_signal = m_signal[:len(signal)] # cut metronome audio to length of analysis file
         onsets = librosa.onset.onset_detect(y = m_signal, sr = SAMPLE_RATE, units='samples')
 
